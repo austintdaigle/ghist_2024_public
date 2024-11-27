@@ -1,0 +1,8 @@
+.vscode/**
+.snakemake/**
+results/**
+logs/**
+.snakemake/**
+**.code-workspace
+temp/**
+workflow/scripts/sachin_data.txt

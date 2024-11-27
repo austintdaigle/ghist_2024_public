@@ -1,0 +1,243 @@
+from snakemake.utils import min_version
+
+min_version("8.0")
+
+include: "rules/common.smk"
+
+# Define the number of desired replicates
+NUM_REPLICATES = 10000
+
+# Function to count existing replicates in the output directory
+def count_existing_replicates(output_dir):
+    files = os.listdir(output_dir)
+    replicates = [f for f in files if f.startswith("replicate_")]
+    return len(replicates)
+
+# Rule to run all replicates
+rule all:
+    input:
+        #expand("bottleneck/stats/replicate_{rep}.stats", rep=range(1,1+NUM_REPLICATES)),
+        #expand("bottleneck/stats_50k/replicate_{rep}.stats", rep=range(1,1+NUM_REPLICATES)),
+        #expand("split/stats/replicate_{rep}.stats", rep=range(1,1+NUM_REPLICATES)),
+        expand("split2/stats/replicate_{rep}.stats", rep=range(1,1+NUM_REPLICATES)),
+        expand("split2/2dsfs/replicate_{rep}_2d_sfs.tsv", rep=range(1,1+NUM_REPLICATES)),
+        #expand("recontact/stats/replicate_{rep}.stats", rep=range(1,1+NUM_REPLICATES)),
+        #expand("introgression/stats/replicate_{rep}.stats", rep=range(1,1+NUM_REPLICATES)),
+
+
+#simulate_bottleneck_script = (
+#    workflow.basedir + "/scripts/simulate_bottleneck.py"
+#)
+#
+#rule simulate_bottleneck:
+#    threads: 
+#        1
+#    output:
+#        "results/replicate_{rep}.msOut.gz"
+#    params:
+#        path= "results/"
+#    shell: "python {simulate_bottleneck_script} --path {params.path} --repnum {wildcards.rep}"
+
+
+simulate_bottleneck_script = (
+    workflow.basedir + "/scripts/simulate_bottleneck_scikit.py"
+)
+
+rule simulate_bottleneck:
+    threads: 
+        1
+    output:
+        "results/replicate_{rep}.txt"
+    params:
+        path= "results/"
+    shell: "python {simulate_bottleneck_script} --path {params.path} --repnum {wildcards.rep}"
+
+
+rule aggregate_replicates:
+    input:
+        expand("results/replicate_{rep}.txt", rep=range(1, NUM_REPLICATES + 1))
+    output:
+        "results/reference_table.txt"
+    shell:
+        """
+        # Aggregation command to concatenate only the second line of each file
+        for file in {input}; do awk 'NR==2' $file >> {output}; done
+        #touch reference_table.txt
+        """
+
+
+simulate_bottleneck_script_savevcf = (
+    workflow.basedir + "/scripts/simulate_bottleneck_savetreeseq.py"
+)
+
+
+rule simulate_bottleneck_savevcf:
+    output:
+        vcf = "bottleneck/vcfs/replicate_{rep}.vcf.gz",
+        log = "bottleneck/vcfs/replicate_{rep}_params.tsv"
+    params:
+        path = "bottleneck/vcfs/"
+    shell:
+        """
+        python {simulate_bottleneck_script_savevcf} \
+            --path {params.path} \
+            --repnum {wildcards.rep} \
+            --logfile {output.log}
+        """
+
+
+rule compute_summary_stats:
+    threads: 1
+    input:
+        vcf = "bottleneck/vcfs/replicate_{rep}.vcf.gz"
+    output:
+        stats = "bottleneck/stats/replicate_{rep}.stats"
+    params:
+        window_length = 100000,  # New window length in base pairs
+        script = workflow.basedir + "/scripts/basic_summary_stats_fromvcf.py"
+    shell:
+        """
+        python {params.script} --vcf {input.vcf} \
+                                --window_length {params.window_length} \
+                                --output {output.stats} 
+        """
+
+
+rule compute_summary_stats_1mil:
+    threads: 1
+    input:
+        vcf = "bottleneck/vcfs/replicate_{rep}.vcf.gz"
+    output:
+        stats = "bottleneck/stats_1mil/replicate_{rep}.stats"
+    params:
+        window_length = 1000000,  # New window length in base pairs
+        script = workflow.basedir + "/scripts/basic_summary_stats_fromvcf.py"
+    shell:
+        """
+        python {params.script} --vcf {input.vcf} \
+                                --window_length {params.window_length} \
+                                --output {output.stats} --max_dist_ld 10000
+        """
+
+
+rule compute_summary_stats_50k:
+    threads: 1
+    input:
+        vcf = "bottleneck/vcfs/replicate_{rep}.vcf.gz"
+    output:
+        stats = "bottleneck/stats_50k/replicate_{rep}.stats"
+    params:
+        window_length = 50000,  # New window length in base pairs
+        script = workflow.basedir + "/scripts/basic_summary_stats_fromvcf.py"
+    shell:
+        """
+        python {params.script} --vcf {input.vcf} \
+                                --window_length {params.window_length} \
+                                --output {output.stats} --max_dist_ld 1000
+        """
+
+rule simulate_population_split:
+    output:
+        vcf = "split2/vcfs/replicate_{rep}.vcf.gz",
+        log = "split2/vcfs/replicate_{rep}_params.tsv"
+    params:
+        path = "split2/vcfs/"
+    shell:
+        """
+        python /nas/longleaf/home/adaigle/ghist_2024/workflow/scripts/simulate_population_split.py \
+            --path {params.path} \
+            --repnum {wildcards.rep} \
+            --logfile {output.log}
+        """
+
+rule compute_2d_sfs:
+    threads: 1
+    input:
+        vcf = "split2/vcfs/replicate_{rep}.vcf.gz"
+    output:
+        sfs = "split2/2dsfs/replicate_{rep}_2d_sfs.tsv"
+    params:
+        script = workflow.basedir + "/scripts/split_isolation_summary_stats_2dSFS.py"
+    shell:
+        """
+        python {params.script} --vcf {input.vcf} --output {output.sfs}
+        """
+
+
+rule compute_summary_stats_popsplit:
+    threads: 1
+    input:
+        vcf = "split2/vcfs/replicate_{rep}.vcf.gz"
+    output:
+        stats = "split2/stats/replicate_{rep}.stats"
+    params:
+        window_length = 100000,  # New window length in base pairs
+        script = workflow.basedir + "/scripts/split_isolation_summary_stats_fromvcf.py"
+    shell:
+        """
+        python {params.script} --vcf {input.vcf} \
+                                --window_length {params.window_length} \
+                                --output {output.stats} 
+        """
+
+rule simulate_population_recontact:
+    output:
+        vcf = "recontact/vcfs/replicate_{rep}.vcf.gz",
+        log = "recontact/vcfs/replicate_{rep}_params.tsv"
+    params:
+        path = "recontact/vcfs/"
+    shell:
+        """
+        python /nas/longleaf/home/adaigle/ghist_2024/workflow/scripts/simulate_population_recontact.py \
+            --path {params.path} \
+            --repnum {wildcards.rep} \
+            --logfile {output.log}
+        """
+
+rule compute_summary_stats_recontact:
+    threads: 1
+    input:
+        vcf = "recontact/vcfs/replicate_{rep}.vcf.gz"
+    output:
+        stats = "recontact/stats/replicate_{rep}.stats"
+    params:
+        window_length = 100000,  # New window length in base pairs
+        script = workflow.basedir + "/scripts/recontact_summary_stats_fromvcf.py"
+    shell:
+        """
+        python {params.script} --vcf {input.vcf} \
+                                --window_length {params.window_length} \
+                                --output {output.stats} 
+        """
+
+
+rule simulate_introgression:
+    output:
+        vcf = "introgression/vcfs/replicate_{rep}.vcf.gz",
+        log = "introgression/vcfs/replicate_{rep}_params.tsv"
+    params:
+        path = "introgression/vcfs/"
+    shell:
+        """
+        python /nas/longleaf/home/adaigle/ghist_2024/workflow/scripts/simulate_introgression.py \
+            --path {params.path} \
+            --repnum {wildcards.rep} \
+            --logfile {output.log}
+        """
+
+
+rule compute_summary_stats_introgression:
+    threads: 1
+    input:
+        vcf = "introgression/vcfs/replicate_{rep}.vcf.gz"
+    output:
+        stats = "introgression/stats/replicate_{rep}.stats"
+    params:
+        window_length = 100000,  # New window length in base pairs
+        script = workflow.basedir + "/scripts/introgression_summary_stats.py"
+    shell:
+        """
+        python {params.script} --vcf {input.vcf} \
+                                --window_length {params.window_length} \
+                                --output {output.stats} 
+        """

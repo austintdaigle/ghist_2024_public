@@ -1,0 +1,9 @@
+__use_yte__: true
+executor: slurm
+default-resources:
+  slurm_account: "rc_dschride_pi"
+  slurm_partition: "general"
+  runtime: 60
+jobs: 1000
+latency-wait: 60
+retries: 1
